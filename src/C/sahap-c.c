@@ -1,7 +1,7 @@
 #include "misc.h"
 #include "sets.h"
 #include "rand48.h"
-#include "libwayne/src/sim_anneal.h"
+#include "libwayne/include/sim_anneal.h"
 
 #define VERBOSE 1
 #define MAX_NUM_SITES 2000000
@@ -179,148 +179,140 @@ int ComputeSiteMEC(GENOME *G, SITE *site) {
     return siteMEC;
 }
 
+typedef struct _move {
+    GENOME *G;
+    int newHap, oldHap, read_id;
+    double oldScore;
+} MOVE;
 
-void Report(int iter, GENOME *G) {
-    if(VERBOSE) {
-	printf("iter %d; Read counts:", iter);
-	for(int h=0; h<PLOIDY; h++)
-	    printf(" H%d=%d", h, SetCardinality(G->haps[h].readSet));
-    }
 
-    int genomeMEC=0;
-    for(int i=0; i<_numSites; i++) {
-	genomeMEC += ComputeSiteMEC(G, &_site[i]);
-	if(VERBOSE>1) {
-	    printf("site %d touches %d reads\n", i, SetCardinality(_site[i].readsThatTouch));
-	    for(int h=0;h<PLOIDY;h++) {
-		static SET *intersect;
-		if(!intersect) intersect=SetAlloc(MAX_NUM_READS); else SetReset(intersect);
-		SetIntersect(intersect, G->haps[h].readSet, _site[i].readsThatTouch);
-		printf("\thap[%d] touches %d reads, is majority %d, with MEC %d\n", h, SetCardinality(intersect),
-		    G->haps[h].sol[i], G->haps[h].MEC[i]);
+// Compute the MEC across the all the sites touched by one read
+double ComputeMEC(Boolean global, foint f) {
+    MOVE *m = (MOVE*) f.v;
+    GENOME *G = m->G;
+    double score = 0;
+    if(global) {
+	for(int i=0; i<_numSites; i++) {
+	    score += ComputeSiteMEC(G, &_site[i]);
+	    if(VERBOSE>1) {
+		printf("site %d touches %d reads\n", i, SetCardinality(_site[i].readsThatTouch));
+		for(int h=0;h<PLOIDY;h++) {
+		    static SET *intersect;
+		    if(!intersect) intersect=SetAlloc(MAX_NUM_READS); else SetReset(intersect);
+		    SetIntersect(intersect, G->haps[h].readSet, _site[i].readsThatTouch);
+		    printf("\thap[%d] touches %d reads, is majority %d, with MEC %d\n", h, SetCardinality(intersect),
+			G->haps[h].sol[i], G->haps[h].MEC[i]);
+		}
 	    }
 	}
+    } else {
+	int r = m->read_id;
+	assert(0 <= r && r < _numReads);
+	for(int i=0; i<_read[r].numSites;i++) score += ComputeSiteMEC(G, &_site[_read[r].firstSite+i]);
     }
-    printf(" total genomeMEC %d (%.2f%%)\n", genomeMEC, 100.0*genomeMEC/_numSites/_coverage);
-}
-
-double ComputeScore(GENOME *G, foint f) {
-	int r = f.i;
-	int beforeMEC=0, afterMEC=0;
-	for(int i=0; i<_read[r].numSites;i++) beforeMEC += ComputeSiteMEC(G, &_site[_read[r].firstSite+i]);
-	return beforeMEC - afterMEC;
-}
-
-double Move(GENOME*G, int hap, int hapShift, int newHap, foint f) {
-	int r = f.i;
-	SetDelete(G->haps[hap].readSet, r);
-	SetAdd  (G->haps[newHap].readSet, r);
-	_read[r].hap=newHap;
+    return score;
 }
 
 #define MAX_TRIES (_numSites*_coverage)
-foint AcceptReject(GENOME*G, double beforeMEC, double afterMEC, int maxMEC, int numTries, foint f, int hap) {
-	int r = f.i;
-	if(beforeMEC>maxMEC || afterMEC>maxMEC) maxMEC=MAX(beforeMEC,afterMEC);
-	if(VERBOSE>1) printf("before %d, after %d...", beforeMEC, afterMEC);
-	// Here is where SA might tell you to accept or reject: your AcceptReject function will look at the first argument
-	// (a Boolean) and simply do the accept, or reject, as instructed.
-	if(afterMEC < beforeMEC) { // do this if told to accept
-	    numTries=MAX_TRIES;
-	    if(VERBOSE>1) printf("accept ") ; // accept the move (do nothing, it's already moved)
-	}
-	else { // do this if told to reject
-	    numTries--;
-	    if(VERBOSE>1) printf("reject(%d) ", numTries);
-	    afterMEC=0;
-	    _read[r].hap=hap;
-	    SetDelete(G->haps[!hap].readSet, r);
-	    SetAdd    (G->haps[hap].readSet, r);
-	    for(int i=0; i<_read[r].numSites;i++) afterMEC += ComputeSiteMEC(G, &_site[_read[r].firstSite+i]);
-	    assert(afterMEC == beforeMEC);
-	}
+static unsigned long maxIters;
+void Report(int iter, foint f) {
+    if(VERBOSE) {
+	MOVE *m = (MOVE*) f.v;
+	GENOME *G = m->G;
+	printf("Read counts:");
+	for(int h=0; h<PLOIDY; h++)
+	    printf(" H%d=%d", h, SetCardinality(G->haps[h].readSet));
+    }
+    int genomeMEC = ComputeMEC(true, f);
+
+    printf("total genomeMEC %d (%.2f%%)", genomeMEC, 100.0*genomeMEC/_numSites/_coverage);
 }
 
+double Move(foint f) { //GENOME*G, int hap, int hapShift, int newHap, foint f)
+    MOVE *m = (MOVE *)f.v;
+    int r=drand48()*_numReads; // pick a read at random
+    m->read_id = r;
+    int beforeMEC=0, afterMEC=0;
+    m->oldHap = _read[r].hap;
+    m->oldScore = beforeMEC = ComputeMEC(false, f);
 
-void SimmulatedAnnealing(GENOME *G) {
-	int maxMEC = 0, iter=0, numTries=MAX_TRIES;
-	
-	SIM_ANNEAL *sa = SimAnnealAlloc(-1, (foint)(void*)_array, SwapElements, ScoreGlobal, AcceptReject, maxIters);
-    SimAnnealAutoSchedule(sa);
-    int result = SimAnnealRun(sa);
-    printf("SimAnnealRun returned %d\n", result);
-    printf("%g\n", ScoreGlobal(f));
+    // compute new location
+    int hap=_read[r].hap, hapShift = drand48()*(PLOIDY-1)+1, newHap = (hap+hapShift)%PLOIDY;
+    m->newHap = newHap;
+    assert(0 <= newHap && newHap < PLOIDY && newHap != hap);
+    if(VERBOSE>1) printf("Read %d is current in H%d, about to move it to H%d...", r, hap, newHap);
+    // Now ACTUALLY do the move and recompute the MEC along its sites (assumes PLOIDY==1)
+    SetDelete(m->G->haps[hap].readSet, r);
+    SetAdd  (m->G->haps[newHap].readSet, r);
+    _read[r].hap=newHap;
 
+    SetDelete(m->G->haps[hap].readSet, r);
+    SetAdd  (m->G->haps[newHap].readSet, r);
+    _read[r].hap=newHap;
 
+    // compute score (after move--exact same calculation as "before" above)
+    afterMEC = ComputeMEC(false, f);
+
+    if(VERBOSE>1) printf("before %d, after %d...", beforeMEC, afterMEC);
+
+    return afterMEC - beforeMEC;
+}
+
+foint AcceptReject(Boolean accept, foint f) {
+    if(!accept) { // do nothing if accept=true, the move has already been made
+	MOVE *m = f.v;
+	int r = m->read_id;
+	// if(VERBOSE>1) printf("reject(%d) ", numTries);
+	_read[r].hap=m->oldHap;
+	SetDelete(m->G->haps[m->newHap].readSet, r);
+	SetAdd   (m->G->haps[m->oldHap].readSet, r);
+    }
+    return f;
 }
 
 void HillClimb(GENOME *G) {
-    int maxMEC=0, iter=0, numTries=MAX_TRIES;
+    int iter=0, numTries=MAX_TRIES;
     // Note: the "stagnant" variable isn't needed in SA, it's only needed in Hill Climbing, because if we've
     // tried 1000 moves without any improvement, it's probably time to give up because we're at a local minimum.
+    MOVE m;
+    m.G = G;
+    foint f; f.v=(void*)(&m);
     while(numTries) { // for SA, this "while" will be replace with a loop over the temperature range estimated first by SA
-	if(iter % 1000 == 0) Report(iter, G);
+	if(iter % 1000 == 0) Report(iter, f);
 	++iter;
-
-	int r=drand48()*MAX_NUM_READS; // pick a read at random
-	foint f; f.i = r; // pass this foint f into the "move" function below. It will look like this:
-	// foint Move(foint f) { int r = f.i; // this is the read to move....
-	// compute score (before move)
-	int beforeMEC=0, afterMEC=0;
-	for(int i=0; i<_read[r].numSites;i++) beforeMEC += ComputeSiteMEC(G, &_site[_read[r].firstSite+i]);
-
-	// compute new location
-	int hap=_read[r].hap, hapShift = drand48()*(PLOIDY-1)+1, newHap = (hap+hapShift)%PLOIDY;
-	assert(0 <= newHap && newHap < PLOIDY && newHap != hap);
-	if(VERBOSE>1) printf(" iter %d Read %d is current in H%d, about to move it to H%d...", iter, r, hap, newHap);
-	// Now ACTUALLY do the move and recompute the MEC along its sites (assumes PLOIDY==1)
-	SetDelete(G->haps[hap].readSet, r);
-	SetAdd  (G->haps[newHap].readSet, r);
-	_read[r].hap=newHap;
-
-	// compute score (after move--exact same calculation as "before" above)
-	for(int i=0; i<_read[r].numSites;i++) afterMEC += ComputeSiteMEC(G, &_site[_read[r].firstSite+i]);
-
+	double deltaMEC = Move(f);
 	// SA code will make this decision, NOT you
-	if(beforeMEC>maxMEC || afterMEC>maxMEC) maxMEC=MAX(beforeMEC,afterMEC);
-	if(VERBOSE>1) printf("before %d, after %d...", beforeMEC, afterMEC);
 	// Here is where SA might tell you to accept or reject: your AcceptReject function will look at the first argument
 	// (a Boolean) and simply do the accept, or reject, as instructed.
-	if(afterMEC < beforeMEC) { // do this if told to accept
+	if(deltaMEC < 0) { // do this if told to accept
 	    numTries=MAX_TRIES;
 	    if(VERBOSE>1) printf("accept ") ; // accept the move (do nothing, it's already moved)
 	}
 	else { // do this if told to reject
-	    numTries--;
-	    if(VERBOSE>1) printf("reject(%d) ", numTries);
-	    afterMEC=0;
-	    _read[r].hap=hap;
-	    SetDelete(G->haps[!hap].readSet, r);
-	    SetAdd    (G->haps[hap].readSet, r);
-	    for(int i=0; i<_read[r].numSites;i++) afterMEC += ComputeSiteMEC(G, &_site[_read[r].firstSite+i]);
-	    assert(afterMEC == beforeMEC);
+	    --numTries;
+	    Boolean accept = false;
+	    AcceptReject(accept, f);
 	}
     }
     printf("\nHill Climbing stagnated\n");
 }
-//SIM_ANNEAL *SimAnnealAlloc(double direction, foint initSol, pMoveFunc Move, pScoreFunc Score, pAcceptFunc Accept, unsigned long maxIters) {
-// int main(void) {
-//     int i;
-//     foint f;
-//     // srand48(GetFancySeed(false)); // comment out this line for reproducible results
-//     for(i=0;i<N;i++) _array[i] = drand48()*N;
 
-//     const unsigned long maxIters = SQR(N)*SQR(N*N);
-//     printf("%g\n", ScoreGlobal(f));
-//     SIM_ANNEAL *sa = SimAnnealAlloc(-1, (foint)(void*)_array, SwapElements, ScoreGlobal, AcceptReject, maxIters);
-//     SimAnnealAutoSchedule(sa);
-//     int result = SimAnnealRun(sa);
-//     printf("SimAnnealRun returned %d\n", result);
-//     printf("%g\n", ScoreGlobal(f));
-// }
+void SimulatedAnnealing(GENOME *G) {
+    MOVE m;
+    m.G = G;
+    foint f; f.v = (void*)(&m);
+    printf("beginning score: %g\n", ComputeMEC(true, f));
+    maxIters = 10*MAX_TRIES;
+    SIM_ANNEAL *sa = SimAnnealAlloc(-1, f, Move, ComputeMEC, AcceptReject, maxIters, 0.75, 1e-5, Report);
+    //SimAnnealAutoSchedule(sa);
+    int result = SimAnnealRun(sa);
+    printf("SimAnnealRun returned %d\n", result);
+    printf("%g\n", ComputeMEC(true, f));
+}
+
 int main(int argc, char *argv[])
 {
-    srand48(time(NULL)+getpid());
+    srand48(GetFancySeed(false));
 
     if(argc>1) ReadWIF(argv[1]);
     else CreateRandomReads(); // reads "created" from the true (but unknown here) haplotype set
@@ -344,5 +336,9 @@ int main(int argc, char *argv[])
     }
 
     printf("Global numSites %d, coverage %d, %d reads of length %d, numHap %d\n", MAX_NUM_SITES, COVERAGE, MAX_NUM_READS, MAX_READ_LEN, PLOIDY);
+#if 0
     HillClimb(&G);
+#else
+    SimulatedAnnealing(&G);
+#endif
 }

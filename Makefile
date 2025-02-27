@@ -1,6 +1,6 @@
 CC=gcc
 CXX=g++
-CXXFLAGS = -ggdb -I"src" -Wall -std=c++11 -O0 #-O3 #-pg
+CXXFLAGS = -I"src" -Wall -std=c++11 -O3 #-ggdb #-pg
 
 ifeq ($(OBJECTIVE),MEC)
     found=1
