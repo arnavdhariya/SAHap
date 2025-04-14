@@ -258,7 +258,7 @@ double Move(foint f) { //GENOME*G, int hap, int hapShift, int newHap, foint f)
     return afterMEC - beforeMEC;
 }
 
-foint AcceptReject(Boolean accept, foint f) {
+Boolean AcceptReject(Boolean accept, foint f) {
     if(!accept) { // do nothing if accept=true, the move has already been made
 	MOVE *m = f.v;
 	int r = m->read_id;
@@ -267,7 +267,7 @@ foint AcceptReject(Boolean accept, foint f) {
 	SetDelete(m->G->haps[m->newHap].readSet, r);
 	SetAdd   (m->G->haps[m->oldHap].readSet, r);
     }
-    return f;
+    return accept;
 }
 
 void HillClimb(GENOME *G) {
