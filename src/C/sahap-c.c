@@ -341,4 +341,5 @@ int main(int argc, char *argv[])
 #else
     SimulatedAnnealing(&G);
 #endif
+    for(int i=0; i<_numSites; i++) printf("site %d has MEC %d\n", i, ComputeSiteMEC(&G, &_site[i]));
 }
