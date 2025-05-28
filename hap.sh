@@ -27,10 +27,19 @@ export TMPDIR=${TMPDIR:-`mktemp -d $MYTMP/$BASENAME.XXXXXX`}
 
 #################### END OF SKELETON, ADD YOUR CODE BELOW THIS LINE
 
+# General idea: for each site, list the letters recorded from all reads that touch that site, sorted by site+letter.
+# This will place agreeing reads at that site all in one place (kinda like k-mers).
+# Then gather them by line-by-line as (site, letter, {set of agreeing reads}) (called slRs)
+# Then for each slR, record all the read pairs that agree with each other.
+# Once finishing reading all the slRs, we have an "agree count" for every pair of reads.
+# Then sort all the read pairs by agree count, and greedily build the two haplotype sets.
+
+HAP=$1
+
 # a WIF file is one read per line
-sed 's/ : #.*//' "$1" | # remove the final colon and comment text
-    awk '{for(c=1;c<NF;c+=5)print $c,$(c+1),FNR}' | sort | # site, letter, and read, sorted by site
-    gawk '{
+sed 's/ : #.*$//' "$2" | # remove the final colon and comment text
+    awk '{for(c=1;c<NF;c+=5)print $c,$(c+1),FNR}' | sort | tee $TMPDIR/slr.txt | # site, letter, and read, sorted by site
+    gawk '{ # prevSL = prev site+letter
 	if(prevSL==$1" "$2) printf " %d", $3; # print read number of the site if site+letter agree with previous line
 	else {
 	    sameSL=0; if(start++) print ""; # print newline except first time
@@ -39,22 +48,46 @@ sed 's/ : #.*//' "$1" | # remove the final colon and comment text
     }' | tee $TMPDIR/slRs.txt | # at this point we have "site letter {set of reads that have this letter at this site}"
     hawk '{for(i=3;i<NF;i++) for(j=i+1;j<=NF;j++) ++agree[MIN($i,$j)][MAX($i,$j)]} # accumulate #sites at which reads agree
 	END{for(i in agree)for(j in agree[i]) print agree[i][j],i,j}' |
-    sort -nr | tee $TMPDIR/nrr.txt | # countAgree r1 r2
-    hawk '{
-	    r1=$2;r2=$3;
-	    if(!(r1 in group)&&!(r2 in group)) { # neither are in a group
-		group[r1]=group[r2]=++numGroups; set[numGroups][r1]=set[numGroups][r2]=$1;
-	    }
-	    else if((r1 in group)&&(r2 in group)) { # both are in a group
-		if(group[r1] != group[r2]) { # merge the groups... merge them into the bigger scoring one
-		    ASSERT(set[group[r1]][r1]>0 && set[group[r2]][r2]>0);
-		    if(set[group[r1]][r1] > set[group[r2]][r2]) {src=r2;dest=r1}
-		    else                                        {src=r1;dest=r2}
-		    for(r in set[group[src]]) {set[group[dest]][r]=set[group[dest]][dest]; group[r]=group[dest]}
-		    delete set[group[src]];
-		}
-	    } # at this point EXACTLY one is in a group
-	    else if(r1 in group){group[r2]=group[r1]; set[group[r1]][r2]=$1}
-	    else if(r2 in group){group[r1]=group[r2]; set[group[r2]][r1]=$1}
+    sort -nr > $TMPDIR/nrr.txt # countAgree r1 r2
+
+# Now go through the nrr file twice--once to get the length of each read, and second time to do merging.
+hawk 'BEGIN{MakeEmptySet(G)}
+    ARGIND==1{r1=$2;r2=$3; ++len[r1]; ++len[r2]}
+    ARGIND==2{
+	printf "* %s *", $0 > "/dev/stderr";
+	r1=$2;r2=$3; ++len[r1]; ++len[r2];
+	if(!(r1 in G)&&!(r2 in G)) { # neither are in a group
+	    G[r1]=G[r2]=++ng; A[ng]=$1; set[ng][r1]=set[ng][r2]=1; # A[group]=totalAgreeCount
+	    printf "\tboth assigned to group %d [%s %s]\n",ng, G[r1],G[r2] > "/dev/stderr"
 	}
-	END{for(g in set){printf "%s\t", g; for(r in set[g])printf " %s",r; print ""}}'
+	else if((r1 in G)&&(r2 in G)) { # both are in a group
+	    gr1=G[r1]; gr2=G[r2];
+	    printf "G[%d]=%d |%d|, G[%d]=%d |%d|;",r1,gr1,A[gr1], r2,gr2, A[gr2] > "/dev/stderr"
+	    ASSERT(set[gr1][r1] && set[gr2][r2], set[gr1][r1]" && "set[gr2][r2]);
+	    if(G[r1]==G[r2]) print " all good" > "/dev/stderr"
+	    else if($1 < (len[r1]+len[r2])/'$HAP') print "not enough agreement to merge" > "/dev/stderr"
+	    else { # merge the groups *IF* they agree more than half their length
+		# merge the groups into the smaller numbered group
+		src=MAX(gr1,gr2); dest=MIN(gr1,gr2);
+		printf "merging set %d into set %d\n", src, dest > "/dev/stderr"
+		A[dest]+=A[src];
+		for(r in set[src]) {set[dest][r]=1; G[r]=dest}
+		delete set[src]; delete A[src];
+	    }
+	} # at this point EXACTLY one is in a group
+	else if(r1 in G){ASSERT(!(r2 in G),r2" oops "G[r2]); gr1=G[r1]; G[r2]=gr1; A[gr1]+=$1; set[gr1][r2]=1; printf "G[%d]=%d\n",r2,gr1 > "/dev/stderr"}
+	else if(r2 in G){ASSERT(!(r1 in G),r1" oops "G[r1]); gr2=G[r2]; G[r1]=gr2; A[gr2]+=$1; set[gr2][r1]=1; printf "G[%d]=%d\n",r1,gr2 > "/dev/stderr"}
+	else ASSERT(0, "should not get here");
+    }
+    END{ printf "\nFinal groupings:\n";
+	for(g in set) {
+	    gFile = sprintf("'$TMPDIR'/g%d",g);
+	    printf "%d reads, set %s =\t{", length(set[g]), g;
+	    for(r in set[g]){printf " %s",r; printf " %d$\n", r > gFile}
+	    print " }"
+	}
+    }' $TMPDIR/nrr.txt $TMPDIR/nrr.txt | sort -nr
+
+ls -S $TMPDIR/g* | while read g; do
+    ls -l $g | awk '{printf "%d ", $5}'; ggrep -f $g $TMPDIR/slr.txt | awk '{print $2}' | uniq -c | awk '$1>1{printf "%s",$2}END{print "\n"}'
+done
