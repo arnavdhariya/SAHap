@@ -45,10 +45,12 @@ sed 's/ : #.*$//' "$2" | # remove the final colon and comment text
 	    sameSL=0; if(start++) print ""; # print newline except first time
 	    prevSL=$1" "$2; printf "%s %s\t%s",$1,$2,$3 # otherwise print new site, letter, and read
 	}
-    }' | tee $TMPDIR/slRs.txt | # at this point we have "site letter {set of reads that have this letter at this site}"
+    }' | sort -n | tee $TMPDIR/slRs.txt | # sorted by "site letter {set of reads that have this letter at this site}"
     hawk '{for(i=3;i<NF;i++) for(j=i+1;j<=NF;j++) ++agree[MIN($i,$j)][MAX($i,$j)]} # accumulate #sites at which reads agree
 	END{for(i in agree)for(j in agree[i]) print agree[i][j],i,j}' |
     sort -nr > $TMPDIR/nrr.txt # countAgree r1 r2
+
+cat $TMPDIR/slRs.txt; exit
 
 # Now go through the nrr file twice--once to get the length of each read, and second time to do merging.
 hawk 'BEGIN{MakeEmptySet(G)}
