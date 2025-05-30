@@ -39,7 +39,7 @@ export TMPDIR=${TMPDIR:-`mktemp -d $MYTMP/$BASENAME.XXXXXX`}
 echo "$1" | grep '^[1-9][0-9]*$' >/dev/null || die "first arg must be an integer"
 [ -r "$2" ] || die "2nd arg must be a file"
 
-H=$1
+HAP=$1
 
 # a WIF file is one read per line
 sed 's/ : #.*$//' "$2" | # remove the final colon and comment text
@@ -51,12 +51,57 @@ sed 's/ : #.*$//' "$2" | # remove the final colon and comment text
 	    prevSL=$1" "$2; printf "%s %s\t%s",$1,$2,$3 # otherwise print new site, letter, and read
 	}
     }' | sort -n | tee $TMPDIR/slRs.txt | # sorted by "site letter {set of reads that have this letter at this site}"
+    hawk 'function SetLine(res,   i){delete res; for(i=3;i<=NF;i++)res[$i]=1}
+    function PrintGroups(G,  g,r,p) {
+	p=PROCINFO["sorted_in"];
+	PROCINFO["sorted_in"]="@ind_num_asc";
+	for(g in G){
+	printf "G[%s]:", g;
+	    for(r in G[g]) printf " %s", r;
+	    print ""
+	}
+	PROCINFO["sorted_in"]=p;
+    }
+    {print} # print every line
+    NR==1{ # first line is special: initialize H[1] (entire Haplotype 1)
+	numGroups=1; H[1][0]=1;
+	SetLine(H[1]);
+    }
+    NR>1{
+	SetLine(L);
+	MakeEmptySet(matches);
+	for(g in H) {
+	    nm=SetIntersect(res,H[g],L);
+	    if(nm) matches[g]=nm;
+	}
+	PROCINFO["sorted_in"]="@val_num_desc";
+	nm=0;
+	for(g in matches) bm[++nm]=g; # bm[i] array is matches sorted biggest to smallest
+	which=bm[1];
+	if(length(matches)==0){ # this must be a new group
+	    print "No match to existing groups:"; PrintGroups(H);
+	    printf "New group %d\n", ++numGroups;
+	    H[numGroups][0]=1;
+	    SetCopy(H[numGroups],L);
+	} else if(length(matches)==1 || # this line is a continuation of exactly one existing group
+		matches[bm[1]] > 2*(matches[bm[2]]+'$HAP')) { # best match WAY better than 2nd best
+	    SetUnion(res, H[which], L); # extend the Haplotype
+	    SetCopy(H[which], res);
+	} else {
+	    printf "mismatch with numMatches %d:\n",length(matches);
+	    PrintGroups(H);
+	}
+    }
+    END{
+	print "FINAL GROUPS"
+	PrintGroups(H);
+    }'
+
+exit
+
     hawk '{for(i=3;i<NF;i++) for(j=i+1;j<=NF;j++) ++agree[MIN($i,$j)][MAX($i,$j)]} # accumulate #sites at which reads agree
 	END{for(i in agree)for(j in agree[i]) print agree[i][j],i,j}' |
-    sort -nr > $TMPDIR/nrr.txt # countAgree r1 r2
-
-cat $TMPDIR/slRs.txt; exit
-
+    sort -nr | tee $TMPDIR/nrr.txt | # countAgree r1 r2
 # Now go through the nrr file twice--once to get the length of each read, and second time to do merging.
 hawk 'BEGIN{MakeEmptySet(G)}
     ARGIND==1{r1=$2;r2=$3; ++len[r1]; ++len[r2]}
