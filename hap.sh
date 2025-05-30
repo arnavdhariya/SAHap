@@ -3,8 +3,9 @@
 EXEDIR=`dirname "$0"`; BASENAME=`basename "$0" .sh`; TAB='	'; NL='
 '
 #################### ADD YOUR USAGE MESSAGE HERE, and the rest of your code after END OF SKELETON ##################
-USAGE="USAGE: $BASENAME bla bla bla
-PURPOSE: describe purpose in words"
+USAGE="USAGE: $BASENAME H foo.wif
+PURPOSE: script to perform... stuff... on a haplotype WIF file
+    H: expected ploidy (eg 2 for diploid)"
 
 ################## SKELETON: DO NOT TOUCH CODE HERE
 # check that you really did add a usage message above
@@ -34,7 +35,11 @@ export TMPDIR=${TMPDIR:-`mktemp -d $MYTMP/$BASENAME.XXXXXX`}
 # Once finishing reading all the slRs, we have an "agree count" for every pair of reads.
 # Then sort all the read pairs by agree count, and greedily build the two haplotype sets.
 
-HAP=$1
+[ $# -eq 2 ] || die "expecting exactly 2 arguments"
+echo "$1" | grep '^[1-9][0-9]*$' >/dev/null || die "first arg must be an integer"
+[ -r "$2" ] || die "2nd arg must be a file"
+
+H=$1
 
 # a WIF file is one read per line
 sed 's/ : #.*$//' "$2" | # remove the final colon and comment text
