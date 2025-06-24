@@ -3,9 +3,10 @@
 EXEDIR=`dirname "$0"`; BASENAME=`basename "$0" .sh`; TAB='	'; NL='
 '
 #################### ADD YOUR USAGE MESSAGE HERE, and the rest of your code after END OF SKELETON ##################
-USAGE="USAGE: $BASENAME H foo.wif
+USAGE="USAGE: $BASENAME [-c] foo.wif
 PURPOSE: script to perform... stuff... on a haplotype WIF file
-    H: expected ploidy (eg 2 for diploid)"
+OPTIONS:
+    -v: use the site variant (3rd entry of the 4-entry site specifier) rather than the genomic letter (default)"
 
 ################## SKELETON: DO NOT TOUCH CODE HERE
 # check that you really did add a usage message above
@@ -35,15 +36,19 @@ export TMPDIR=${TMPDIR:-`mktemp -d $MYTMP/$BASENAME.XXXXXX`}
 # Once finishing reading all the slRs, we have an "agree count" for every pair of reads.
 # Then sort all the read pairs by agree count, and greedily build the two haplotype sets.
 
-[ $# -eq 2 ] || die "expecting exactly 2 arguments"
-echo "$1" | grep '^[1-9][0-9]*$' >/dev/null || die "first arg must be an integer"
-[ -r "$2" ] || die "2nd arg must be a file"
+LETTER_COL=1 # set this to 2 if we only get the digit (variation) of the site rather than the actual genomic letter
+case "$1" in
+-v) LETTER_COL=2; shift ;;
+-*) die "unknown option '$1'";;
+esac
 
-HAP=$1
+[ $# -eq 1 ] || die "expecting exactly 1 argument, a WIF file"
+[ -r "$1" ] || die "1st arg must be a file"
 
 # a WIF file is one read per line
-sed 's/ : #.*$//' "$2" | # remove the final colon and comment text
-    awk '{for(c=1;c<NF;c+=5)print $c,$(c+1),FNR}' | sort | tee $TMPDIR/slr.txt | # site, letter, and read, sorted by site
+sed 's/ : #.*$//' "$1" | # remove the final colon and comment text
+    awk '{for(c=1;c<NF;c+=5)print $c,$(c+'$LETTER_COL'),FNR}' | # site, letter, and read, in the order seen in the WIF file
+    sort | tee $TMPDIR/slr.txt | # now sorted by site as a STRING--worry about sorting them numerically later
     gawk '{ # prevSL = prev site+letter
 	if(prevSL==$1" "$2) printf " %d", $3; # print read number of the site if site+letter agree with previous line
 	else {
