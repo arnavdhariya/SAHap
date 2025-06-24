@@ -62,33 +62,37 @@ sed 's/ : #.*$//' "$2" | # remove the final colon and comment text
 	}
 	PROCINFO["sorted_in"]=p;
     }
-    {print} # print every line
+    {printf "%s", $0} # print every line
     NR==1{ # first line is special: initialize H[1] (entire Haplotype 1)
 	numGroups=1; H[1][0]=1;
 	SetLine(H[1]);
+	print ""
     }
     NR>1{
-	SetLine(L);
-	MakeEmptySet(matches);
+	SetLine(L); # L becomes the set of reads that see this letter at this site
+	MakeEmptySet(numMatches);
 	for(g in H) {
-	    nm=SetIntersect(res,H[g],L);
-	    if(nm) matches[g]=nm;
+	    # number of matches = overlap between the reads seeing this letter at this site, and the haplotypes-so-far
+	    nm = SetIntersect(res,H[g],L);
+	    if(nm) numMatches[g] = nm;
 	}
-	PROCINFO["sorted_in"]="@val_num_desc";
-	nm=0;
-	for(g in matches) bm[++nm]=g; # bm[i] array is matches sorted biggest to smallest
-	which=bm[1];
-	if(length(matches)==0){ # this must be a new group
-	    print "No match to existing groups:"; PrintGroups(H);
+	nm=0; delete bm;
+	PROCINFO["sorted_in"]="@val_num_desc"; # force the next "for" loop to iterate through numMatches largest-to-smallest
+	for(g in numMatches) bm[++nm]=g; # bm[1] is the haplotype with the greatest number of reads that match this site.
+	ASSERT(length(numMatches) == length(bm));
+	if(length(numMatches)==0) { # this must be a new group
+	    print "\tNo match to existing groups:"; PrintGroups(H);
 	    printf "New group %d\n", ++numGroups;
 	    H[numGroups][0]=1;
 	    SetCopy(H[numGroups],L);
-	} else if(length(matches)==1 || # this line is a continuation of exactly one existing group
-		matches[bm[1]] > 2*(matches[bm[2]]+'$HAP')) { # best match WAY better than 2nd best
-	    SetUnion(res, H[which], L); # extend the Haplotype
-	    SetCopy(H[which], res);
+	} else if(length(numMatches)==1) { # this line is a continuation of exactly one existing group
+	    SetUnion(res, H[bm[1]], L); # extend the Haplotype
+	    SetCopy(H[bm[1]], res);
+	    print "\tMatches only group", bm[1]
 	} else {
-	    printf "mismatch with numMatches %d:\n",length(matches);
+	    printf "\tDo nothing because there is more than one match:";
+	    for(i=1;i<=length(bm);i++) printf " %d has %d;",bm[i],numMatches[bm[i]];
+	    print ""
 	    PrintGroups(H);
 	}
     }
