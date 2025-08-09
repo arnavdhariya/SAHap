@@ -37,8 +37,6 @@ export TMPDIR=${TMPDIR:-`mktemp -d $MYTMP/$BASENAME.XXXXXX`}
 # Then sort all the read pairs by agree count, and greedily build the two haplotype sets.
 
 LETTER_COL=1 # set this to 2 if we only get the digit (variation) of the site rather than the actual genomic letter
-MAX_GROUPS=2
-THRESHOLD_VALUE=0.75 # seventy-five percent or more similarity
 case "$1" in
 -v) LETTER_COL=2; shift ;;
 -*) die "unknown option '$1'";;
@@ -104,58 +102,42 @@ do
 	    PROCINFO["sorted_in"]="@val_num_desc"; # force the next "for" loop to iterate through numMatches largest-to-smallest
 	    for(g in numMatches) bm[++nm]=g; # bm[1] is the haplotype with the greatest number of reads that match this site.
 	    ASSERT(length(numMatches) == length(bm));
-	    if(length(numMatches)==0) { # this must be a new group
-			if(numGroups < MAX_GROUPS){
-				print "\tNo match to existing groups:"; PrintGroups(H);
-				printf "New group %d\n", ++numGroups;
-				H[numGroups][0]=1;
-				SetCopy(H[numGroups],L);
-			}else{
-				bestGroup = -1; 
-				bestOverlap = 0; 
-				for (g in H){
-					overlap = SetIntersect(res, H[g], L);
-					if(length(H[g]) > 0 && (overlap/length(H[g])) > THRESHOLD_VALUE && overlap > bestOverlap){
-						bestGroup = g; 
-						bestOverlap = overlap; 
-					}
-				}
-				if(bestGroup != -1){
-					SetUnion(res, H[bestGroup], L);
-					SetCopy(H[bestGroup], res); 
-					print "Assigned into", bestGroup, "with overlap percentage", bestOverlap; 
-				}else{
-					print "Could not assign read due to low similarity", bestOverlap 
-				}
-			}
-	    } else if(length(numMatches)==1) { # this line is a continuation of exactly one existing group
-		SetUnion(res, H[bm[1]], L); # extend the Haplotype
-		SetCopy(H[bm[1]], res);
-		print "\tMatches only group", bm[1]
-	    } else {
-			if(numGroups >= MAX_GROUPS){
-				bestGroup = -1; 
-				bestOverlapNum = 0; 
-				for(i = 1; i <= length(bm); i++){
-					g = bm[i];
-					if(length(H[g]) > 0 && (numMatches[g] / length(H[g]) > THRESHOLD_VALUE && numMatches[g] > bestOverlapNum)){
-						bestGroup = g; 
-						bestOverlapNum = numMatches[g]; 
-					}
-				}
 
-				if(bestGroup != -1){
-					SetUnion(res, H[bestGroup], L);
-					SetCopy(H[bestGroup], res); 
-					print "Assigned into", bestGroup, "with overlap percentage", bestOverlapNum; 
-				}else{
-					print "Could not assign read due to low similarity", bestOverlap 
-				}
-			}
-		#printf "\tDo nothing because there is more than one match:";
-		#for(i=1;i<=length(bm);i++) printf " %d has %d;",bm[i],numMatches[bm[i]];
-		#print ""
-		PrintGroups(H);
+	    if(length(numMatches)==0) { # this must be a new group
+		    print "\tNo match to existing groups:"; PrintGroups(H);
+		    printf "New group %d\n", ++numGroups;
+		    H[numGroups][0]=1;
+		    SetCopy(H[numGroups],L);
+	    } else if(length(numMatches)==1) { # this line is a continuation of exactly one existing group
+		    SetUnion(res, H[bm[1]], L); # extend the Haplotype
+		    SetCopy(H[bm[1]], res);
+		    print "\tMatches only group", bm[1]
+	    } else {
+            #####old code that I replaced #####
+		    # printf "\tDo nothing because there is more than one match:";
+		    # for(i=1;i<=length(bm);i++) printf " %d has %d;",bm[i],numMatches[bm[i]];
+		    # print ""
+		    # PrintGroups(H);
+            #####old code ends here #####
+            #####new code starts here #####
+            #prob it is in group 1 
+
+            p1 = numMatches[1]/(length(H[1]) - 1); 
+            p2 = numMatches[2]/(length(H[2]) - 1);
+            cutoff_value = 0.1 # the difference in proportion is > 10% 
+            if(p1 - p2 > cutoff_value) {
+                SetUnion(res, H[1], L);
+                SetCopy(H[1], res);
+                print "\tAssigned to group 1 based on proportion " p1 " p1 prop and " p2 " p2 prop."
+            } else if (p2 - p1 > cutoff_value){
+                SetUnion(res, H[2], L);
+                SetCopy(H[2], res);
+                print "\tAssigned to group 2 based on proportion"  p1 " p1 prop and " p2 " p2 prop."
+            } else {
+                print "\tNo clear choice, removed read"
+            }
+            #new code ends here 
+
 	    }
 	}
 	END{
