@@ -116,11 +116,29 @@ do
 		for(i=1;i<=length(bm);i++) printf " %d has %d;",bm[i],numMatches[bm[i]];
 		print ""
 		PrintGroups(H);
+
+        ambigCount++
+        SetCopy(ambigReads[ambigCount], L)
 	    }
 	}
 	END{
 	    print "FINAL GROUPS"
-	    PrintGroups(H);
+        PrintGroups(H);
+        print ""
+        print "AMBIGUOUS READS"
+
+        PROCINFO["sorted_in"]="@ind_num_asc";
+
+        count = 0
+        for (a in ambigReads) {
+            count++
+            printf "Ambiguous[%d]:", count
+            for (r in ambigReads[a]) {
+                printf " %s", r
+            }
+            print ""
+        }
+        print ambigCount " total ambiguous cases."
 	}'
 done
 
