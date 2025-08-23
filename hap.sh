@@ -118,8 +118,8 @@ do
 		PrintGroups(H);
 
         ambigCount++
-        SetCopy(ambigReads[ambigCount], L)
-	    }
+        ambigReads[$3] = 1
+        }
 	}
 	END{
 	    print "FINAL GROUPS"
@@ -130,15 +130,12 @@ do
         PROCINFO["sorted_in"]="@ind_num_asc";
 
         count = 0
-        for (a in ambigReads) {
+        for (read in ambigReads) {
             count++
-            printf "Ambiguous[%d]:", count
-            for (r in ambigReads[a]) {
-                printf " %s", r
-            }
-            print ""
+            printf "Ambiguous[%d]: %s\n", count, read
         }
-        print ambigCount " total ambiguous cases."
+
+        print count " total ambiguous cases."
 	}'
 done
 
